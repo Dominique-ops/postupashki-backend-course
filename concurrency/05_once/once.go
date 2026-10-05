@@ -16,21 +16,24 @@ const (
 )
 
 func (o *Once) Do(f func()) {
-	state := atomic.LoadUint32(&o.state)
-	switch state {
-	case done:
-		return
-	case inProgress:
-		futex.Wait(&o.state, inProgress)
-		return
-	case notStarted:
-		if atomic.CompareAndSwapUint32(&o.state, notStarted, inProgress) {
-			defer func() {
-				atomic.StoreUint32(&o.state, done)
-				futex.WakeAll(&o.state)
-			}()
-			f()
+	for {
+		state := atomic.LoadUint32(&o.state)
+		switch state {
+		case done:
 			return
+		case inProgress:
+			futex.Wait(&o.state, inProgress)
+			continue
+		case notStarted:
+			if atomic.CompareAndSwapUint32(&o.state, notStarted, inProgress) {
+				defer func() {
+					atomic.StoreUint32(&o.state, done)
+					futex.WakeAll(&o.state)
+				}()
+				f()
+				return
+			}
+			continue
 		}
 	}
 }

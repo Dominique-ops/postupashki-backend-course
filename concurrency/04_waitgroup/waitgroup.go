@@ -1,8 +1,9 @@
 package waitgroup
 
 import (
-	"primitives/internal/futex"
 	"sync/atomic"
+
+	"primitives/internal/futex"
 )
 
 type WaitGroup struct {
@@ -10,33 +11,44 @@ type WaitGroup struct {
 }
 
 func (wg *WaitGroup) Add(delta int) {
-	atomic.AddUint32(&wg.count, uint32(delta))
-}
-
-func (wg *WaitGroup) Done() {
 	for {
 		old := atomic.LoadUint32(&wg.count)
 
-		if old == 0 {
+		newCount := int64(old) + int64(delta)
+
+		if newCount < 0 {
 			panic("negative WaitGroup counter")
 		}
 
-		if atomic.CompareAndSwapUint32(&wg.count, old, old-1) {
-			if old == 1 {
+		if newCount > int64(^uint32(0)) {
+			panic("WaitGroup counter overflow")
+		}
+
+		if atomic.CompareAndSwapUint32(
+			&wg.count,
+			old,
+			uint32(newCount),
+		) {
+			if newCount == 0 && old != 0 {
 				futex.WakeAll(&wg.count)
 			}
 			return
 		}
 	}
 }
+
+func (wg *WaitGroup) Done() {
+	wg.Add(-1)
+}
+
 func (wg *WaitGroup) Wait() {
 	for {
+		n := atomic.LoadUint32(&wg.count)
 
-		if n := atomic.LoadUint32(&wg.count); n != 0 {
-			futex.Wait(&wg.count, n)
-		} else {
+		if n == 0 {
 			return
 		}
 
+		futex.Wait(&wg.count, n)
 	}
 }
